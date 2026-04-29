@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3MF Mask Generator</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="glass-container">
+        <header>
+            <h1><span class="gradient-text">3MF</span> Mask Generator</h1>
+            <p>Generate high-resolution PNG silhouette masks and depth slices from 3MF models.</p>
+        </header>
+
+        <main>
+            <!-- Upload Section -->
+            <section id="upload-section" class="card">
+                <div id="drop-zone" class="drop-zone">
+                    <span class="upload-icon">📁</span>
+                    <p>Drag & Drop a <strong>.3mf</strong> file here, or click to select</p>
+                    <input type="file" id="file-input" accept=".3mf" hidden>
+                </div>
+            </section>
+
+            <!-- Loading State -->
+            <section id="loading-section" class="card hidden">
+                <div class="spinner"></div>
+                <p id="loading-text">Processing file...</p>
+            </section>
+
+            <!-- Configuration & Axis Preview Section -->
+            <section id="workspace-section" class="hidden">
+                <div class="workspace-grid">
+                    
+                    <!-- Sidebar Config -->
+                    <aside class="config-sidebar card glass">
+                        <h2>1. Export Settings</h2>
+                        
+                        <div class="form-group">
+                            <label for="out-width">Output Width (px)</label>
+                            <input type="number" id="out-width" value="1920" min="100">
+                        </div>
+
+                        <div class="form-group">
+                            <label for="out-height">Output Height (px)</label>
+                            <input type="number" id="out-height" value="1080" min="100">
+                        </div>
+
+                        <div class="form-group checkbox-group">
+                            <input type="checkbox" id="split-depths">
+                            <label for="split-depths">Split Depth Layers</label>
+                            <small class="help-text">Generates separate masks for surfaces at different depths facing the camera.</small>
+                        </div>
+                        
+                        <button id="preview-slices-btn" class="primary-btn outline-btn">
+                            Preview Slices
+                        </button>
+                    </aside>
+
+                    <!-- Previews -->
+                    <div class="preview-area card">
+                        <h2>2. Select Target Axes</h2>
+                        <div class="axes-grid" id="preview-grid">
+                            <!-- Axis previews dynamically injected here -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Layer Selection Section -->
+                <div id="layer-selection-section" class="card hidden" style="margin-top: 2rem;">
+                    <div class="layer-header">
+                        <h2>3. Select specific mask layers for export</h2>
+                        <button id="preview-resolume-btn" class="primary-btn">Preview Output Layout & Configure</button>
+                    </div>
+                    <!-- Detailed slices previews -->
+                    <div class="axes-grid" id="layer-grid">
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Resolume SVG Overlay Modal -->
+    <div id="resolume-preview-modal" class="modal hidden">
+        <div class="modal-content glass" style="max-width: 90vw; max-height: 90vh;">
+            <div class="modal-header">
+                <h2>Configure Input Sources & Layout Preview</h2>
+                <div class="modal-actions">
+                    <button id="close-modal-btn" class="outline-btn">Close</button>
+                    <button id="export-selected-btn" class="primary-btn">Download Final Layout ZIP</button>
+                </div>
+            </div>
+            <div class="modal-body" style="height: 75vh; width: 100%; display:flex; flex-direction: row; background:#111; overflow:hidden; border-radius:12px; margin-top:20px; padding: 0;">
+                
+                <!-- Left Sidebar -->
+                <div id="resolume-sidebar" style="width: 320px; background: #0a0a0a; border-right: 1px solid #333; display:flex; flex-direction:column; overflow:hidden;">
+                    <!-- API Connection Header -->
+                    <div style="padding: 15px; border-bottom: 1px solid #333; font-size: 12px; display:flex; flex-direction:column; gap:8px;">
+                        <label style="font-size: 14px; color: var(--primary-color); font-weight:bold;">Resolume Web API</label>
+                        <input type="text" id="resolume-api-url" value="http://127.0.0.1:8080/api/v1/composition" style="background:#000; color:#fff; border:1px solid #444; padding:6px; border-radius:4px; font-size:11px; width:100%;">
+                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                            <button id="fetch-layers-btn" class="outline-btn" style="padding: 5px 10px; font-size: 11px;">Connect</button>
+                            <span id="api-status-text" style="font-size: 11px; color: #888;"></span>
+                        </div>
+                    </div>
+                    
+                    <div style="padding: 10px 15px; font-weight: bold; border-bottom: 1px solid #222; background: #111; color: #bbb; display:flex; justify-content:space-between; align-items:center;">
+                        <span>Layout Groups</span>
+                        <span style="font-size:10px; font-weight:normal;">Input Source</span>
+                    </div>
+                    
+                    <!-- Scrollable Layers List -->
+                    <div id="resolume-sidebar-layers" style="flex: 1; overflow-y: auto; padding: 10px;">
+                        <!-- Dynamic Sidebar Rows via JS -->
+                    </div>
+                </div>
+
+                <!-- Right Canvas -->
+                <div id="resolume-preview-area" style="flex: 1; background: #000; position:relative; overflow:hidden; display:flex; justify-content:center; align-items:center;">
+                    <svg id="resolume-svg-canvas" style="width: 100%; height: 100%;" preserveAspectRatio="xMidYMid meet">
+                        <!-- Dynamic Polygons -->
+                    </svg>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <!-- Template for Axis Preview Card -->
+    <template id="axis-card-template">
+        <div class="axis-card">
+            <div class="img-wrapper">
+                <img src="" alt="preview">
+            </div>
+            <div class="axis-controls">
+                <input type="checkbox" class="axis-checkbox" checked>
+                <label class="axis-label"></label>
+            </div>
+        </div>
+    </template>
+
+    <!-- Template for Layer Slice Card -->
+    <template id="layer-card-template">
+        <div class="axis-card">
+            <div class="img-wrapper">
+                <img src="" alt="layer preview">
+            </div>
+            <div class="axis-controls layer-controls" style="flex-direction:column; align-items:flex-start; gap:8px;">
+                <div style="display:flex; align-items:center;">
+                    <input type="checkbox" class="layer-checkbox" checked style="margin-right:8px;">
+                    <div>
+                        <strong class="layer-title"></strong><br>
+                        <small class="layer-subtitle"></small>
+                    </div>
+                </div>
+                <input type="text" class="layer-custom-name" style="width: 100%; background:rgba(0,0,0,0.3); border:1px solid rgba(255,255,255,0.1); color:#fff; padding:4px; border-radius:4px; font-size:12px;" placeholder="Custom output name...">
+            </div>
+        </div>
+    </template>
+
+    <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>

@@ -1,0 +1,21 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<XmlState name="Test Layout">
+  <versionInfo name="Resolume Arena" majorVersion="7" minorVersion="23" microVersion="2" revision="51094"/>
+  <ScreenSetup name="ScreenSetup">
+    <CurrentCompositionTextureSize width="1920" height="1080"/>
+    <screens>
+      <Screen name="Screen 1" uniqueId="1001">
+        <layers>
+          <Polygon uniqueId="123" IsVirgin="1">
+            <InputContour closed="1">
+              <points>
+                <v x="535.1" y="102.2"/>
+              </points>
+              <segments>L</segments>
+            </InputContour>
+          </Polygon>
+        </layers>
+      </Screen>
+    </screens>
+  </ScreenSetup>
+</XmlState>
