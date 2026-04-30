@@ -24,9 +24,9 @@ document.addEventListener('DOMContentLoaded', () => {
     fileInput.addEventListener('change', (e) => { if (e.target.files.length) handleFile(e.target.files[0]); });
 
     async function handleFile(file) {
-        if (!file.name.toLowerCase().endsWith('.3mf')) return alert('Please upload a valid .3mf file.');
+        if (!file.name.toLowerCase().endsWith('.step') && !file.name.toLowerCase().endsWith('.stp') && !file.name.toLowerCase().endsWith('.obj') && !file.name.toLowerCase().endsWith('.3mf')) return alert('Please upload a valid .step, .obj, or .3mf file.');
         const formData = new FormData(); formData.append('file', file);
-        showLoading('Uploading and processing 3MF...');
+        showLoading('Uploading and processing file...');
 
         try {
             const upRes = await fetch('/api/upload', { method: 'POST', body: formData });
@@ -34,12 +34,10 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!upRes.ok) throw new Error(upData.error || 'Upload failed');
             currentSessionId = upData.session_id;
 
-            showLoading('Rendering structural axes previews...');
-            const prevRes = await fetch(`/api/preview/${currentSessionId}`, { method: 'POST' });
-            const prevData = await prevRes.json();
-            if (!prevRes.ok) throw new Error(prevData.error || 'Preview failed');
+            // Render Hierarchy
+            renderHierarchy(upData.hierarchy);
 
-            renderAxesPreviews(prevData.previews);
+            layerSection.classList.add('hidden'); // hide layer section when new file is loaded
             showWorkspace();
         } catch (err) {
             alert(err.message);
@@ -47,41 +45,165 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    function renderAxesPreviews(previews) {
-        previewGrid.innerHTML = '';
-        layerSection.classList.add('hidden'); // hide layer section when new file is loaded
-        
-        const template = document.getElementById('axis-card-template');
-        const labels = { 'x':'Right (X)', '-x':'Left (-X)', 'y':'Back (Y)', '-y':'Front (-Y)', 'z':'Top (Z)', '-z':'Bottom (-Z)' };
-
-        for (const [axis, src] of Object.entries(previews)) {
-            const clone = template.content.cloneNode(true);
-            const img = clone.querySelector('img');
-            const checkbox = clone.querySelector('.axis-checkbox');
-            const label = clone.querySelector('.axis-label');
-
-            img.src = src;
-            checkbox.value = axis;
-            checkbox.id = `chk-${axis}`;
-            label.htmlFor = `chk-${axis}`;
-            label.textContent = labels[axis] || axis;
-
-            previewGrid.appendChild(clone);
+    function renderHierarchy(hierarchy) {
+        const container = document.getElementById('hierarchy-container');
+        container.innerHTML = '';
+        if (!hierarchy) {
+            container.innerHTML = '<p style="color: #888;">No hierarchy found.</p>';
+            return;
         }
+
+        function createNode(node) {
+            const div = document.createElement('div');
+            div.style.marginBottom = '2px';
+            
+            const header = document.createElement('div');
+            header.style.display = 'flex';
+            header.style.alignItems = 'center';
+            header.style.gap = '5px';
+            
+            const expandBtn = document.createElement('span');
+            expandBtn.style.cursor = 'pointer';
+            expandBtn.style.width = '12px';
+            expandBtn.style.display = 'inline-block';
+            
+            const hasChildren = node.children && node.children.length > 0;
+            expandBtn.innerHTML = hasChildren ? '▼' : '';
+            
+            const cb = document.createElement('input');
+            cb.type = 'checkbox';
+            cb.checked = true;
+            cb.className = 'node-checkbox';
+            cb.dataset.node = node.id;
+            
+            const label = document.createElement('span');
+            label.textContent = node.name;
+            if (node.geom) {
+                const badge = document.createElement('span');
+                badge.textContent = ' ⚙';
+                badge.style.color = '#fca311';
+                label.appendChild(badge);
+            }
+            
+            header.appendChild(expandBtn);
+            header.appendChild(cb);
+            header.appendChild(label);
+            div.appendChild(header);
+            
+            if (hasChildren) {
+                const childrenDiv = document.createElement('div');
+                childrenDiv.style.marginLeft = '15px';
+                
+                node.children.forEach(child => {
+                    childrenDiv.appendChild(createNode(child));
+                });
+                
+                expandBtn.addEventListener('click', () => {
+                    const isHidden = childrenDiv.style.display === 'none';
+                    childrenDiv.style.display = isHidden ? 'block' : 'none';
+                    expandBtn.innerHTML = isHidden ? '▼' : '▶';
+                });
+                
+                cb.addEventListener('change', (e) => {
+                    const childCbs = childrenDiv.querySelectorAll('.node-checkbox');
+                    childCbs.forEach(c => c.checked = e.target.checked);
+                });
+                
+                div.appendChild(childrenDiv);
+            }
+            
+            return div;
+        }
+
+        container.appendChild(createNode(hierarchy));
     }
+
+    // Perspective Controls
+    const usePerspectiveCb = document.getElementById('use-perspective');
+    const cameraSettingsDiv = document.getElementById('camera-settings');
+    usePerspectiveCb.addEventListener('change', (e) => {
+        if (e.target.checked) cameraSettingsDiv.classList.remove('hidden');
+        else cameraSettingsDiv.classList.add('hidden');
+    });
+
+    function getVisibilityState() {
+        const hidden_groups = [];
+        const hidden_bodies = [];
+        document.querySelectorAll('.group-checkbox').forEach(cb => {
+            if (!cb.checked) hidden_groups.push(cb.dataset.group);
+        });
+        document.querySelectorAll('.body-checkbox').forEach(cb => {
+            if (!cb.checked) hidden_bodies.push(cb.dataset.body);
+        });
+        return { hidden_groups, hidden_bodies };
+    }
+
+    function getCameraSettings() {
+        if (!usePerspectiveCb.checked) return null;
+        return {
+            pos: [
+                parseFloat(document.getElementById('cam-eye-x').value),
+                parseFloat(document.getElementById('cam-eye-y').value),
+                parseFloat(document.getElementById('cam-eye-z').value)
+            ],
+            target: [
+                parseFloat(document.getElementById('cam-tgt-x').value),
+                parseFloat(document.getElementById('cam-tgt-y').value),
+                parseFloat(document.getElementById('cam-tgt-z').value)
+            ],
+            fov: parseFloat(document.getElementById('cam-fov').value)
+        };
+    }
+
+    function getOrthoSettings() {
+        return {
+            eye: [
+                parseFloat(document.getElementById('ortho-eye-x').value),
+                parseFloat(document.getElementById('ortho-eye-y').value),
+                parseFloat(document.getElementById('ortho-eye-z').value)
+            ],
+            target: [
+                parseFloat(document.getElementById('ortho-tgt-x').value),
+                parseFloat(document.getElementById('ortho-tgt-y').value),
+                parseFloat(document.getElementById('ortho-tgt-z').value)
+            ]
+        };
+    }
+
+    const camFovSlider = document.getElementById('cam-fov');
+    const camFovDisplay = document.getElementById('cam-fov-display');
+    let fovDebounceTimer;
+
+    camFovSlider.addEventListener('input', (e) => {
+        camFovDisplay.textContent = `${e.target.value}°`;
+        
+        clearTimeout(fovDebounceTimer);
+        fovDebounceTimer = setTimeout(() => {
+            if (currentSessionId && document.querySelectorAll('.node-checkbox:checked').length > 0) {
+                previewSlicesBtn.click();
+            }
+        }, 300);
+    });
 
     // New step: Preview Slices
     previewSlicesBtn.addEventListener('click', async () => {
         if (!currentSessionId) return;
 
-        const selectedAxes = Array.from(document.querySelectorAll('.axis-checkbox:checked')).map(cb => cb.value);
-        if (selectedAxes.length === 0) return alert('Please select at least one Axis above to preview.');
+        const selected_nodes = Array.from(document.querySelectorAll('.node-checkbox:checked')).map(cb => cb.dataset.node);
         
-        const split_depths = document.getElementById('split-depths').checked;
-        const payload = { axes: selectedAxes, split_depths };
+        if (selected_nodes.length === 0) return alert('Please select at least one component from the Scene Hierarchy.');
+        
+        const camera_settings = getCameraSettings();
+        const ortho_settings = getOrthoSettings();
+        
+        const payload = { 
+            selected_nodes,
+            camera_settings,
+            ortho_settings
+        };
         
         const origText = previewSlicesBtn.textContent;
-        previewSlicesBtn.textContent = 'Generating layer previews...';
+        previewSlicesBtn.textContent = 'Generating component previews...';
         previewSlicesBtn.disabled = true;
 
         try {
@@ -112,12 +234,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
         layers.forEach(layer => {
             const clone = template.content.cloneNode(true);
-            const img = clone.querySelector('img');
+            const imgInput = clone.querySelector('.img-input');
+            const imgOutput = clone.querySelector('.img-output');
             const checkbox = clone.querySelector('.layer-checkbox');
             const title = clone.querySelector('.layer-title');
             const subtitle = clone.querySelector('.layer-subtitle');
 
-            img.src = layer.src;
+            imgInput.src = layer.src_input;
+            imgOutput.src = layer.src_output;
             checkbox.value = layer.id;
             checkbox.id = `layer-chk-${layer.id}`;
             
@@ -144,6 +268,14 @@ document.addEventListener('DOMContentLoaded', () => {
     let currentSelectedLayersInfo = [];
     let layerInputSources = {}; // Maps layer_id -> "0:1"
 
+    function getVisibilityState() {
+        const hidden_nodes = [];
+        document.querySelectorAll('.node-checkbox').forEach(cb => {
+            if (!cb.checked) hidden_nodes.push(cb.dataset.node);
+        });
+        return { hidden_groups: hidden_nodes, hidden_bodies: [] };
+    }
+
     resolumePreviewBtn.addEventListener('click', async () => {
         if (!currentSessionId) return;
 
@@ -162,6 +294,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const width = document.getElementById('out-width').value;
         const height = document.getElementById('out-height').value;
+        
+        const visState = getVisibilityState();
+        const camera_settings = getCameraSettings();
 
         const originalText = resolumePreviewBtn.textContent;
         resolumePreviewBtn.textContent = 'Generating Preview Layout...';
@@ -172,9 +307,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    selected_layers: currentSelectedLayersInfo.map(l => l.id),
+                    selected_nodes: currentSelectedLayersInfo.map(l => l.id),
                     width: parseInt(width),
-                    height: parseInt(height)
+                    height: parseInt(height),
+                    hidden_groups: visState.hidden_groups,
+                    hidden_bodies: visState.hidden_bodies,
+                    camera_settings,
+                    ortho_settings: getOrthoSettings(),
+                    cull_backfaces: document.getElementById('cull-backfaces').checked
                 })
             });
 
@@ -199,8 +339,15 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     function renderSVGPreview(polygonData, width, height) {
-        svgCanvas.innerHTML = '';
-        svgCanvas.setAttribute('viewBox', `0 0 ${width} ${height}`);
+        const svgCanvasInput = document.getElementById('resolume-svg-canvas-input');
+        const svgCanvasOutput = document.getElementById('resolume-svg-canvas-output');
+        
+        svgCanvasInput.innerHTML = '';
+        svgCanvasOutput.innerHTML = '';
+        
+        svgCanvasInput.setAttribute('viewBox', `0 0 ${width} ${height}`);
+        svgCanvasOutput.setAttribute('viewBox', `0 0 ${width} ${height}`);
+        
         resolumeSidebarLayers.innerHTML = ''; // Clear sidebar
         layerInputSources = {}; // Reset mappings
 
@@ -209,22 +356,45 @@ document.addEventListener('DOMContentLoaded', () => {
             
             const groupColor = `hsl(${(idx * 137.5) % 360}, 75%, 60%)`;
             
-            // Build SVG Group
-            const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-            g.setAttribute('class', 'preview-poly-group');
-            g.style.cursor = 'pointer';
-            g.dataset.layerId = polyGroup.layer_id;
+            // Build Input SVG Group
+            const gIn = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+            gIn.setAttribute('class', 'preview-poly-group');
+            gIn.style.cursor = 'pointer';
+            gIn.dataset.layerId = polyGroup.layer_id;
 
-            polyGroup.loops.forEach(loop => {
-                const polygon = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
-                const pointsStr = loop.map(pt => `${pt[0]},${pt[1]}`).join(' ');
-                polygon.setAttribute('points', pointsStr);
-                polygon.setAttribute('fill', groupColor);
-                polygon.setAttribute('fill-opacity', '0.2');
-                polygon.setAttribute('stroke', groupColor);
-                polygon.setAttribute('stroke-width', '2');
-                g.appendChild(polygon);
-            });
+            // Build Output SVG Group
+            const gOut = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+            gOut.setAttribute('class', 'preview-poly-group');
+            gOut.style.cursor = 'pointer';
+            gOut.dataset.layerId = polyGroup.layer_id;
+
+            if (polyGroup.resolume_loops) {
+                polyGroup.resolume_loops.forEach(rLoop => {
+                    // Draw Input Loop
+                    if (rLoop.input && rLoop.input.length > 0) {
+                        const polyIn = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+                        const pointsIn = rLoop.input.map(pt => `${pt[0]},${pt[1]}`).join(' ');
+                        polyIn.setAttribute('points', pointsIn);
+                        polyIn.setAttribute('fill', groupColor);
+                        polyIn.setAttribute('fill-opacity', '0.2');
+                        polyIn.setAttribute('stroke', groupColor);
+                        polyIn.setAttribute('stroke-width', '2');
+                        gIn.appendChild(polyIn);
+                    }
+                    
+                    // Draw Output Loop
+                    if (rLoop.output && rLoop.output.length > 0) {
+                        const polyOut = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+                        const pointsOut = rLoop.output.map(pt => `${pt[0]},${pt[1]}`).join(' ');
+                        polyOut.setAttribute('points', pointsOut);
+                        polyOut.setAttribute('fill', groupColor);
+                        polyOut.setAttribute('fill-opacity', '0.2');
+                        polyOut.setAttribute('stroke', groupColor);
+                        polyOut.setAttribute('stroke-width', '2');
+                        gOut.appendChild(polyOut);
+                    }
+                });
+            }
             
             // Build Sidebar Row
             const row = document.createElement('div');
@@ -280,19 +450,24 @@ document.addEventListener('DOMContentLoaded', () => {
             // Hover two-way binds
             const highlight = () => {
                 row.style.background = 'rgba(255,255,255,0.15)';
-                Array.from(g.children).forEach(p => p.setAttribute('fill-opacity', '0.6'));
+                Array.from(gIn.children).forEach(p => p.setAttribute('fill-opacity', '0.6'));
+                Array.from(gOut.children).forEach(p => p.setAttribute('fill-opacity', '0.6'));
             };
             const unhighlight = () => {
                 row.style.background = 'rgba(255,255,255,0.05)';
-                Array.from(g.children).forEach(p => p.setAttribute('fill-opacity', '0.2'));
+                Array.from(gIn.children).forEach(p => p.setAttribute('fill-opacity', '0.2'));
+                Array.from(gOut.children).forEach(p => p.setAttribute('fill-opacity', '0.2'));
             };
 
             row.addEventListener('mouseenter', highlight);
             row.addEventListener('mouseleave', unhighlight);
-            g.addEventListener('mouseenter', highlight);
-            g.addEventListener('mouseleave', unhighlight);
+            gIn.addEventListener('mouseenter', highlight);
+            gIn.addEventListener('mouseleave', unhighlight);
+            gOut.addEventListener('mouseenter', highlight);
+            gOut.addEventListener('mouseleave', unhighlight);
 
-            svgCanvas.appendChild(g);
+            svgCanvasInput.appendChild(gIn);
+            svgCanvasOutput.appendChild(gOut);
         });
     }
 
@@ -389,7 +564,10 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // Final export functionality 
-    exportSelectedBtn.addEventListener('click', async () => {
+    const exportXmlBtn = document.getElementById('export-xml-btn');
+    const exportPngBtn = document.getElementById('export-png-btn');
+
+    async function handleExport(exportType, buttonElement) {
         if (!currentSessionId) return;
 
         const width = document.getElementById('out-width').value;
@@ -403,16 +581,27 @@ document.addEventListener('DOMContentLoaded', () => {
                 input_source: layerInputSources[info.id] || "0:1"
             };
         });
+        
+        const visState = getVisibilityState();
+        const camera_settings = getCameraSettings();
+        const ortho_settings = getOrthoSettings();
+        const cullBackfaces = document.getElementById('cull-backfaces').checked;
 
         const payload = {
             layer_configs: layer_configs,
             width: parseInt(width),
-            height: parseInt(height)
+            height: parseInt(height),
+            hidden_groups: visState.hidden_groups,
+            hidden_bodies: visState.hidden_bodies,
+            camera_settings,
+            ortho_settings,
+            cull_backfaces: cullBackfaces,
+            export_type: exportType
         };
 
-        const originalText = exportSelectedBtn.textContent;
-        exportSelectedBtn.textContent = 'Generating High-Res Export...';
-        exportSelectedBtn.disabled = true;
+        const originalText = buttonElement.textContent;
+        buttonElement.textContent = 'Generating...';
+        buttonElement.disabled = true;
 
         try {
             const res = await fetch(`/api/export/${currentSessionId}`, {
@@ -431,7 +620,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const a = document.createElement('a'); a.style.display = 'none'; a.href = url;
             
             const disposition = res.headers.get('Content-Disposition');
-            let filename = 'masks.zip';
+            let filename = `export_${exportType}.zip`;
             if (disposition && disposition.indexOf('attachment') !== -1) {
                 const matches = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/.exec(disposition);
                 if (matches != null && matches[1]) filename = matches[1].replace(/['"]/g, '');
@@ -444,10 +633,14 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (err) {
             alert(err.message);
         } finally {
-            exportSelectedBtn.textContent = originalText;
-            exportSelectedBtn.disabled = false;
+            buttonElement.textContent = originalText;
+            buttonElement.disabled = false;
         }
-    });
+    }
+
+    exportSelectedBtn.addEventListener('click', () => handleExport('all', exportSelectedBtn));
+    exportXmlBtn.addEventListener('click', () => handleExport('xml', exportXmlBtn));
+    exportPngBtn.addEventListener('click', () => handleExport('png', exportPngBtn));
 
     function showLoading(text) { uploadSection.classList.add('hidden'); workspaceSection.classList.add('hidden'); loadingSection.classList.remove('hidden'); loadingText.textContent = text; }
     function showWorkspace() { loadingSection.classList.add('hidden'); workspaceSection.classList.remove('hidden'); }

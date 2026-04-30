@@ -3,15 +3,15 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>3MF Mask Generator</title>
+    <title>STEP to Resolume Advanced Output and Mask Generator</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 </head>
 <body>
     <div class="glass-container">
         <header>
-            <h1><span class="gradient-text">3MF</span> Mask Generator</h1>
-            <p>Generate high-resolution PNG silhouette masks and depth slices from 3MF models.</p>
+            <h1><span class="gradient-text">STEP</span> to Resolume Advanced Output and Mask Generator</h1>
+            <p>Generate Resolume mapping layouts and high-resolution PNG silhouette masks directly from STEP and OBJ models.</p>
         </header>
 
         <main>
@@ -19,8 +19,8 @@
             <section id="upload-section" class="card">
                 <div id="drop-zone" class="drop-zone">
                     <span class="upload-icon">📁</span>
-                    <p>Drag & Drop a <strong>.3mf</strong> file here, or click to select</p>
-                    <input type="file" id="file-input" accept=".3mf" hidden>
+                    <p>Drag & Drop a <strong>.step / .obj</strong> file here, or click to select</p>
+                    <input type="file" id="file-input" accept=".step,.stp,.obj,.3mf" hidden>
                 </div>
             </section>
 
@@ -47,31 +47,70 @@
                             <label for="out-height">Output Height (px)</label>
                             <input type="number" id="out-height" value="1080" min="100">
                         </div>
+                        <hr style="border:0; border-top:1px solid rgba(255,255,255,0.1); margin: 15px 0;">
+                        
+                        <h2>Scene Hierarchy</h2>
+                        <div id="hierarchy-container" style="max-height: 400px; overflow-y: auto; background: rgba(0,0,0,0.2); padding: 10px; border-radius: 4px; font-size: 12px; margin-bottom: 15px;">
+                            <p style="color: #888;">Upload a file to see geometry.</p>
+                        </div>
+                        <hr style="border:0; border-top:1px solid rgba(255,255,255,0.1); margin: 15px 0;">
+                        
+                        <h2>Orthographic Input Camera</h2>
+                        <div id="ortho-settings" style="background: rgba(0,0,0,0.2); padding: 10px; border-radius: 4px; margin-bottom: 15px;">
+                            <div style="display: flex; gap: 5px; margin-bottom: 8px;">
+                                <div style="flex:1"><label style="font-size: 10px;">Eye X</label><input type="number" id="ortho-eye-x" value="0" style="width:100%" step="0.001"></div>
+                                <div style="flex:1"><label style="font-size: 10px;">Eye Y</label><input type="number" id="ortho-eye-y" value="17121.782" style="width:100%" step="0.001"></div>
+                                <div style="flex:1"><label style="font-size: 10px;">Eye Z</label><input type="number" id="ortho-eye-z" value="-3048" style="width:100%" step="0.001"></div>
+                            </div>
+                            <div style="display: flex; gap: 5px;">
+                                <div style="flex:1"><label style="font-size: 10px;">Target X</label><input type="number" id="ortho-tgt-x" value="0" style="width:100%" step="0.001"></div>
+                                <div style="flex:1"><label style="font-size: 10px;">Target Y</label><input type="number" id="ortho-tgt-y" value="-9144" style="width:100%" step="0.001"></div>
+                                <div style="flex:1"><label style="font-size: 10px;">Target Z</label><input type="number" id="ortho-tgt-z" value="7620" style="width:100%" step="0.001"></div>
+                            </div>
+                        </div>
 
-                        <div class="form-group checkbox-group">
-                            <input type="checkbox" id="split-depths">
-                            <label for="split-depths">Split Depth Layers</label>
-                            <small class="help-text">Generates separate masks for surfaces at different depths facing the camera.</small>
+                        <h2>Perspective Camera</h2>
+                        <div class="form-group checkbox-group" style="margin-bottom: 10px;">
+                            <input type="checkbox" id="use-perspective" checked>
+                            <label for="use-perspective">Enable Perspective View</label>
                         </div>
                         
+                        <div class="form-group checkbox-group" style="margin-bottom: 10px;">
+                            <input type="checkbox" id="cull-backfaces">
+                            <label for="cull-backfaces" title="Disable to export faces pointing away from the camera">Enable Backface Culling</label>
+                        </div>
+                        
+                        <div id="camera-settings" class="hidden" style="background: rgba(0,0,0,0.2); padding: 10px; border-radius: 4px; margin-bottom: 15px;">
+                            <div style="display: flex; gap: 5px; margin-bottom: 8px;">
+                                <div style="flex:1"><label style="font-size: 10px;">Eye X</label><input type="number" id="cam-eye-x" value="6552" style="width:100%"></div>
+                                <div style="flex:1"><label style="font-size: 10px;">Eye Y</label><input type="number" id="cam-eye-y" value="15818" style="width:100%"></div>
+                                <div style="flex:1"><label style="font-size: 10px;">Eye Z</label><input type="number" id="cam-eye-z" value="-3048" style="width:100%"></div>
+                            </div>
+                            <div style="display: flex; gap: 5px;">
+                                <div style="flex:1"><label style="font-size: 10px;">Target X</label><input type="number" id="cam-tgt-x" value="-3499" style="width:100%"></div>
+                                <div style="flex:1"><label style="font-size: 10px;">Target Y</label><input type="number" id="cam-tgt-y" value="-8448" style="width:100%"></div>
+                                <div style="flex:1"><label style="font-size: 10px;">Target Z</label><input type="number" id="cam-tgt-z" value="7620" style="width:100%"></div>
+                            </div>
+                            <div style="margin-top: 8px;">
+                                <label style="font-size: 10px; display: flex; justify-content: space-between;">
+                                    <span>Field of View (FOV)</span>
+                                    <span id="cam-fov-display">60°</span>
+                                </label>
+                                <input type="range" id="cam-fov" min="10" max="150" value="60" style="width:100%">
+                            </div>
+                        </div>
+
                         <button id="preview-slices-btn" class="primary-btn outline-btn">
-                            Preview Slices
+                            Apply & Preview
                         </button>
                     </aside>
 
-                    <!-- Previews -->
-                    <div class="preview-area card">
-                        <h2>2. Select Target Axes</h2>
-                        <div class="axes-grid" id="preview-grid">
-                            <!-- Axis previews dynamically injected here -->
-                        </div>
-                    </div>
                 </div>
 
                 <!-- Layer Selection Section -->
                 <div id="layer-selection-section" class="card hidden" style="margin-top: 2rem;">
                     <div class="layer-header">
-                        <h2>3. Select specific mask layers for export</h2>
+                        <h2>2. Select specific component layers for export</h2>
                         <button id="preview-resolume-btn" class="primary-btn">Preview Output Layout & Configure</button>
                     </div>
                     <!-- Detailed slices previews -->
@@ -87,9 +126,11 @@
         <div class="modal-content glass" style="max-width: 90vw; max-height: 90vh;">
             <div class="modal-header">
                 <h2>Configure Input Sources & Layout Preview</h2>
-                <div class="modal-actions">
+                <div class="modal-actions" style="display: flex; gap: 8px;">
                     <button id="close-modal-btn" class="outline-btn">Close</button>
-                    <button id="export-selected-btn" class="primary-btn">Download Final Layout ZIP</button>
+                    <button id="export-xml-btn" class="primary-btn">Download Resolume Mapping</button>
+                    <button id="export-png-btn" class="primary-btn">Download Masks</button>
+                    <button id="export-selected-btn" class="primary-btn" style="background: linear-gradient(135deg, #fca311, #e07a5f);">Download All Files</button>
                 </div>
             </div>
             <div class="modal-body" style="height: 75vh; width: 100%; display:flex; flex-direction: row; background:#111; overflow:hidden; border-radius:12px; margin-top:20px; padding: 0;">
@@ -117,11 +158,25 @@
                     </div>
                 </div>
 
-                <!-- Right Canvas -->
-                <div id="resolume-preview-area" style="flex: 1; background: #000; position:relative; overflow:hidden; display:flex; justify-content:center; align-items:center;">
-                    <svg id="resolume-svg-canvas" style="width: 100%; height: 100%;" preserveAspectRatio="xMidYMid meet">
-                        <!-- Dynamic Polygons -->
-                    </svg>
+                <!-- Right Canvas Area (Dual Previews) -->
+                <div id="resolume-preview-area" style="flex: 1; display: flex; flex-direction: row; background: #000; position:relative; overflow:hidden;">
+                    
+                    <!-- Ortho Input Canvas -->
+                    <div style="flex: 1; border-right: 1px solid #333; display: flex; flex-direction: column;">
+                        <div style="padding: 5px; text-align: center; color: #aaa; font-size: 12px; background: #111; border-bottom: 1px solid #333;">Orthographic Input</div>
+                        <div style="flex: 1; position: relative; display: flex; justify-content: center; align-items: center;">
+                            <svg id="resolume-svg-canvas-input" style="width: 100%; height: 100%;" preserveAspectRatio="xMidYMid meet"></svg>
+                        </div>
+                    </div>
+
+                    <!-- Perspective Output Canvas -->
+                    <div style="flex: 1; display: flex; flex-direction: column;">
+                        <div style="padding: 5px; text-align: center; color: #aaa; font-size: 12px; background: #111; border-bottom: 1px solid #333;">Perspective Output</div>
+                        <div style="flex: 1; position: relative; display: flex; justify-content: center; align-items: center;">
+                            <svg id="resolume-svg-canvas-output" style="width: 100%; height: 100%;" preserveAspectRatio="xMidYMid meet"></svg>
+                        </div>
+                    </div>
+                    
                 </div>
 
             </div>
@@ -144,8 +199,15 @@
     <!-- Template for Layer Slice Card -->
     <template id="layer-card-template">
         <div class="axis-card">
-            <div class="img-wrapper">
-                <img src="" alt="layer preview">
+            <div style="display:flex; flex-direction:row; gap:4px; padding: 4px;">
+                <div class="img-wrapper" style="flex:1;">
+                    <img class="img-input" src="" alt="input preview">
+                    <div style="font-size:10px; text-align:center; margin-top:2px; color:#aaa;">Ortho (Input)</div>
+                </div>
+                <div class="img-wrapper" style="flex:1;">
+                    <img class="img-output" src="" alt="output preview">
+                    <div style="font-size:10px; text-align:center; margin-top:2px; color:#aaa;">Persp (Output)</div>
+                </div>
             </div>
             <div class="axis-controls layer-controls" style="flex-direction:column; align-items:flex-start; gap:8px;">
                 <div style="display:flex; align-items:center;">

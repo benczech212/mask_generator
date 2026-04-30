@@ -119,50 +119,76 @@ def render_perspective(mesh, eye, target, up, output_path, width=1920, height=10
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--input", default="../Octagon Full.step")
+    parser.add_argument("--input", default="Octagon Full.obj")
     parser.add_argument("--outdir", default="../renders")
+    parser.add_argument("--list", action="store_true", help="List all bodies and their material groups, then exit")
+    parser.add_argument("--hide-groups", type=str, default="", help="Comma separated list of material groups to hide")
+    parser.add_argument("--hide-bodies", type=str, default="", help="Comma separated list of body names to hide")
     args = parser.parse_args()
     
     os.makedirs(args.outdir, exist_ok=True)
     
-    stl_path = "temp_render.stl"
-    
-    # Convert step to stl if needed
-    if args.input.lower().endswith(".step") or args.input.lower().endswith(".stp"):
-        import gmsh
-        gmsh.initialize()
-        gmsh.option.setNumber("General.Terminal", 0)
-        gmsh.merge(args.input)
-        gmsh.model.mesh.generate(2)
-        gmsh.write(stl_path)
-        gmsh.finalize()
-        mesh_path = stl_path
-    else:
-        mesh_path = args.input
-        
+    mesh_path = args.input
     print(f"Loading {mesh_path}...")
-    mesh = trimesh.load(mesh_path)
+    scene = trimesh.load(mesh_path, process=False)
+    
+    if isinstance(scene, trimesh.Trimesh):
+        geometries = {'default': scene}
+    else:
+        geometries = scene.geometry
+        
+    # Group by material
+    material_groups = {}
+    for name, geom in geometries.items():
+        mat_name = geom.visual.material.name if hasattr(geom.visual, 'material') and geom.visual.material else 'default'
+        if mat_name not in material_groups:
+            material_groups[mat_name] = []
+        material_groups[mat_name].append((name, geom))
+        
+    if args.list:
+        print("\n--- Geometry by Material Group ---")
+        for mat_name, bodies in material_groups.items():
+            print(f"Group: '{mat_name}' ({len(bodies)} bodies)")
+            for b_name, _ in bodies:
+                print(f"  - {b_name}")
+        return
+
+    hide_groups = [g.strip() for g in args.hide_groups.split(',') if g.strip()]
+    hide_bodies = [b.strip() for b in args.hide_bodies.split(',') if b.strip()]
+    
+    # Collect visible meshes
+    visible_meshes = []
+    for mat_name, bodies in material_groups.items():
+        if mat_name in hide_groups:
+            print(f"Hiding group '{mat_name}'")
+            continue
+            
+        for b_name, geom in bodies:
+            if b_name in hide_bodies:
+                print(f"Hiding body '{b_name}'")
+                continue
+            visible_meshes.append(geom)
+            
+    if not visible_meshes:
+        print("No visible meshes left to render!")
+        return
+        
+    # Combine visible meshes into one for rendering
+    combined_mesh = trimesh.util.concatenate(visible_meshes)
     
     eye = np.array([6552.222, 15818.464, -3048.00])
     
-    # Determine target: Center of mass or origin
-    # "pointed with the axis Axis1"
-    # Assuming Axis1 is Z-axis or points to center. Let's point to center of mass for now
-    target = mesh.center_mass
-    # If Axis1 is straight down the Y axis towards origin:
-    # target = eye + np.array([0, -1, 0])
+    # Determine target: Center of mass
+    target = combined_mesh.center_mass
     
     up = np.array([0.0, 0.0, 1.0])
     if abs(np.dot((target-eye)/np.linalg.norm(target-eye), up)) > 0.99:
         up = np.array([0.0, 1.0, 0.0]) # avoid collinearity
         
     out_file = os.path.join(args.outdir, "perspective_render.png")
-    print(f"Rendering from {eye} looking at {target} to {out_file}...")
-    render_perspective(mesh, eye, target, up, out_file)
+    print(f"\nRendering {len(visible_meshes)} bodies from {eye} looking at {target} to {out_file}...")
+    render_perspective(combined_mesh, eye, target, up, out_file)
     print("Done.")
-    
-    if os.path.exists(stl_path):
-        os.remove(stl_path)
 
 if __name__ == "__main__":
     main()
