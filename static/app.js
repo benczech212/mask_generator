@@ -45,6 +45,38 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    document.querySelectorAll('.example-btn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            const exampleId = btn.dataset.example;
+            showLoading(`Loading example ${exampleId}...`);
+            try {
+                const res = await fetch(`/api/load_example/${exampleId}`, { method: 'POST' });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || 'Failed to load example');
+                
+                currentSessionId = data.session_id;
+                renderHierarchy(data.hierarchy);
+                layerSection.classList.add('hidden');
+                showWorkspace();
+            } catch (err) {
+                alert(err.message);
+                resetUI();
+            }
+        });
+    });
+
+    const chooseNewFileBtn = document.getElementById('choose-new-file-btn');
+    if (chooseNewFileBtn) {
+        chooseNewFileBtn.addEventListener('click', () => {
+            currentSessionId = null;
+            document.getElementById('hierarchy-container').innerHTML = '';
+            document.getElementById('resolume-sidebar-layers').innerHTML = '';
+            document.getElementById('layer-grid').innerHTML = '';
+            layerInputSources = {};
+            resetUI();
+        });
+    }
+
     function renderHierarchy(hierarchy) {
         const container = document.getElementById('hierarchy-container');
         container.innerHTML = '';
@@ -172,18 +204,36 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const camFovSlider = document.getElementById('cam-fov');
     const camFovDisplay = document.getElementById('cam-fov-display');
+    const modalCamFovSlider = document.getElementById('modal-cam-fov');
+    const modalCamFovDisplay = document.getElementById('modal-cam-fov-display');
     let fovDebounceTimer;
 
-    camFovSlider.addEventListener('input', (e) => {
-        camFovDisplay.textContent = `${e.target.value}°`;
+    function syncFovAndPreview(value) {
+        if(camFovSlider) camFovSlider.value = value;
+        if(modalCamFovSlider) modalCamFovSlider.value = value;
+        if(camFovDisplay) camFovDisplay.textContent = `${value}°`;
+        if(modalCamFovDisplay) modalCamFovDisplay.textContent = `${value}°`;
         
         clearTimeout(fovDebounceTimer);
         fovDebounceTimer = setTimeout(() => {
-            if (currentSessionId && document.querySelectorAll('.node-checkbox:checked').length > 0) {
-                previewSlicesBtn.click();
+            if (currentSessionId) {
+                const resolumePreviewModal = document.getElementById('resolume-preview-modal');
+                if (resolumePreviewModal && !resolumePreviewModal.classList.contains('hidden') && currentSelectedLayersInfo.length > 0) {
+                    const resolumePreviewBtn = document.getElementById('preview-resolume-btn');
+                    if(resolumePreviewBtn) resolumePreviewBtn.click();
+                } else if (document.querySelectorAll('.node-checkbox:checked').length > 0) {
+                    previewSlicesBtn.click();
+                }
             }
         }, 300);
-    });
+    }
+
+    if(camFovSlider) {
+        camFovSlider.addEventListener('input', (e) => syncFovAndPreview(e.target.value));
+    }
+    if(modalCamFovSlider) {
+        modalCamFovSlider.addEventListener('input', (e) => syncFovAndPreview(e.target.value));
+    }
 
     // New step: Preview Slices
     previewSlicesBtn.addEventListener('click', async () => {
@@ -348,11 +398,12 @@ document.addEventListener('DOMContentLoaded', () => {
         svgCanvasInput.setAttribute('viewBox', `0 0 ${width} ${height}`);
         svgCanvasOutput.setAttribute('viewBox', `0 0 ${width} ${height}`);
         
+        const previousInputSources = { ...layerInputSources };
         resolumeSidebarLayers.innerHTML = ''; // Clear sidebar
         layerInputSources = {}; // Reset mappings
 
         polygonData.forEach((polyGroup, idx) => {
-            layerInputSources[polyGroup.layer_id] = "0:1"; // Default
+            layerInputSources[polyGroup.layer_id] = previousInputSources[polyGroup.layer_id] || "0:1"; // Restore previous or default
             
             const groupColor = `hsl(${(idx * 137.5) % 360}, 75%, 60%)`;
             
@@ -417,7 +468,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 <div style="font-size: 11px; font-weight: bold; color: #fff; width: 100px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${titleStr}">${titleStr}</div>
                 <div style="display:flex; flex-direction:column; gap:4px; max-width:140px;">
                     <select class="sidebar-select hidden" style="background:#000; color:#fff; border:1px solid #444; padding:3px; border-radius:3px; font-size:10px; width:100%;"></select>
-                    <input type="text" class="sidebar-input" value="0:1" style="background:#000; color:#fff; border:1px solid #444; padding:3px; border-radius:3px; font-size:10px; width:100%;">
+                    <input type="text" class="sidebar-input" value="${layerInputSources[polyGroup.layer_id]}" style="background:#000; color:#fff; border:1px solid #444; padding:3px; border-radius:3px; font-size:10px; width:100%;">
                 </div>
             `;
             

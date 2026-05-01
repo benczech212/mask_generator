@@ -44,6 +44,36 @@ def upload_file():
         
     return jsonify({'error': 'Invalid file type. Only .3mf, .obj, and .step allowed.'}), 400
 
+@app.route('/api/load_example/<example_id>', methods=['POST'])
+def load_example(example_id):
+    if example_id == 'octagon':
+        filename = 'Octagon_Full.step'
+    elif example_id == 'cube':
+        filename = 'Cube_Test_2.step'
+    else:
+        return jsonify({'error': 'Invalid example'}), 400
+        
+    example_path = os.path.join(app.root_path, 'examples', filename)
+    if not os.path.exists(example_path):
+        return jsonify({'error': 'Example file not found'}), 404
+        
+    session_id = str(uuid.uuid4())
+    session_dir = os.path.join(app.config['UPLOAD_FOLDER'], session_id)
+    os.makedirs(session_dir, exist_ok=True)
+    
+    dest_path = os.path.join(session_dir, filename)
+    import shutil
+    shutil.copy(example_path, dest_path)
+    
+    try:
+        from mask_processor import get_scene_hierarchy
+        hierarchy = get_scene_hierarchy(dest_path)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': f'Failed to parse scene: {str(e)}'}), 500
+        
+    return jsonify({'session_id': session_id, 'filename': filename, 'hierarchy': hierarchy})
 
 
 @app.route('/api/preview_export/<session_id>', methods=['POST'])
@@ -132,8 +162,11 @@ def export_masks(session_id):
     export_type = data.get('export_type', 'all')
     try:
         if export_type == 'xml':
-            zip_filename = f"{base_name}_masks_xml.zip"
-            files_to_zip = [f for f in exported_files if f.endswith('.xml')]
+            files_to_send = [f for f in exported_files if f.endswith('.xml')]
+            if len(files_to_send) > 0:
+                return send_file(files_to_send[0], as_attachment=True, download_name=os.path.basename(files_to_send[0]))
+            else:
+                return jsonify({'error': 'No XML files generated'}), 500
         elif export_type == 'png':
             zip_filename = f"{base_name}_masks_png.zip"
             files_to_zip = [f for f in exported_files if f.endswith('.png')]

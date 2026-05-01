@@ -11,6 +11,7 @@ import base64
 import lxml.etree as ET
 import random
 import re
+import math
 
 def get_scene_hierarchy(filepath):
     scene = trimesh.load(filepath, process=False)
@@ -220,19 +221,24 @@ def get_transform_params(mesh, axis, width, height, camera_settings=None):
         
         view_matrix = get_view_matrix(eye, target, up)
         aspect_ratio = width / height
+        # Project using actual FOV
         fov = float(camera_settings.get('fov', 60.0))
         verts_2d, z_depths = project_perspective(mesh.vertices, view_matrix, fov, aspect_ratio)
         
-        # Calculate bounds dynamically for perspective
-        # Filter out faces behind camera to compute valid bounds
-        faces = mesh.faces
-        face_z = z_depths[faces]
-        valid_faces_mask = np.any(face_z < 0, axis=1)
-        valid_tris = verts_2d[faces[valid_faces_mask]]
+        # Calculate bounds dynamically for perspective using a REFERENCE FOV
+        # This allows the FOV slider to actually zoom the object in/out visually
+        # instead of the auto-framer completely neutralizing the size change.
+        reference_fov = 60.0
+        verts_2d_ref, _ = project_perspective(mesh.vertices, view_matrix, reference_fov, aspect_ratio)
         
-        if len(valid_tris) > 0:
-            min_x, min_y = np.min(valid_tris.reshape(-1, 2), axis=0)
-            max_x, max_y = np.max(valid_tris.reshape(-1, 2), axis=0)
+        faces = mesh.faces
+        face_z = z_depths[faces] # Use actual Z depths to cull faces behind camera
+        valid_faces_mask = np.any(face_z < 0, axis=1)
+        valid_tris_ref = verts_2d_ref[faces[valid_faces_mask]]
+        
+        if len(valid_tris_ref) > 0:
+            min_x, min_y = np.min(valid_tris_ref.reshape(-1, 2), axis=0)
+            max_x, max_y = np.max(valid_tris_ref.reshape(-1, 2), axis=0)
         else:
             min_x, min_y, max_x, max_y = -1, -1, 1, 1
             
@@ -253,7 +259,8 @@ def get_transform_params(mesh, axis, width, height, camera_settings=None):
         eye = np.array(camera_settings.get('eye', [0, 17121.782, -3048]))
         target = np.array(camera_settings.get('target', [0, -9144, 7620]))
         up = np.array([0.0, 0.0, 1.0])
-        if abs(np.dot((target-eye)/np.linalg.norm(target-eye), up)) > 0.99:
+        fwd_len = np.linalg.norm(target-eye)
+        if fwd_len > 1e-6 and abs(np.dot((target-eye)/fwd_len, up)) > 0.99:
             up = np.array([0.0, 1.0, 0.0])
         
         view_matrix = get_view_matrix(eye, target, up)
@@ -579,6 +586,7 @@ def create_resolume_xml(screen_data_list, width, height, filepath):
             
         layers = new_screen.find('layers')
         tmpl_poly = layers.find('Polygon')
+        tmpl_slice = layers.find('Slice')
         layers.clear()
         
         for poly_entry in polygon_data:
@@ -602,22 +610,6 @@ def create_resolume_xml(screen_data_list, width, height, filepath):
                     
                 uid = str(random.randint(1000000000000, 9999999999999))
                 
-                new_poly = copy.deepcopy(tmpl_poly)
-                new_poly.set("uniqueId", uid)
-                
-                # Map Properties
-                params = new_poly.find('.//Params[@name="Common"]')
-                for param in params.findall('Param'):
-                    if param.get('name') == 'Name':
-                        param.set('value', f"{safe_layer_name}_{loop_idx}")
-                        
-                in_params = new_poly.find('.//Params[@name="Input"]')
-                if in_params is not None:
-                    for param in in_params.findall('ParamChoice'):
-                        if param.get('name') == 'Input Source':
-                            param.set('value', input_source)
-                            param.set('default', input_source)
-                
                 # Compute Bounds
                 in_xs = [pt[0] for pt in in_loop]
                 in_ys = [pt[1] for pt in in_loop]
@@ -628,46 +620,137 @@ def create_resolume_xml(screen_data_list, width, height, filepath):
                 out_ys = [pt[1] for pt in out_loop]
                 out_min_x, out_max_x = min(out_xs), max(out_xs)
                 out_min_y, out_max_y = min(out_ys), max(out_ys)
-                
-                # Inject Rects
-                rect = new_poly.find('InputRect')
-                if rect is not None:
-                    rect.clear()
-                    rect.set('orientation', "0")
-                    ET.SubElement(rect, "v", x=str(round(in_min_x,2)), y=str(round(in_min_y,2)))
-                    ET.SubElement(rect, "v", x=str(round(in_max_x,2)), y=str(round(in_min_y,2)))
-                    ET.SubElement(rect, "v", x=str(round(in_max_x,2)), y=str(round(in_max_y,2)))
-                    ET.SubElement(rect, "v", x=str(round(in_min_x,2)), y=str(round(in_max_y,2)))
-    
-                rect = new_poly.find('OutputRect')
-                if rect is not None:
-                    rect.clear()
-                    rect.set('orientation', "0")
-                    ET.SubElement(rect, "v", x=str(round(out_min_x,2)), y=str(round(out_min_y,2)))
-                    ET.SubElement(rect, "v", x=str(round(out_max_x,2)), y=str(round(out_min_y,2)))
-                    ET.SubElement(rect, "v", x=str(round(out_max_x,2)), y=str(round(out_max_y,2)))
-                    ET.SubElement(rect, "v", x=str(round(out_min_x,2)), y=str(round(out_max_y,2)))
+
+                if len(in_loop) == 4 and tmpl_slice is not None:
+                    new_item = copy.deepcopy(tmpl_slice)
+                    new_item.set("uniqueId", uid)
                     
-                # Inject Contours
-                contour = new_poly.find('InputContour')
-                if contour is not None:
-                    pts_node = contour.find('points')
-                    pts_node.clear()
-                    for pt in in_loop:
-                        ET.SubElement(pts_node, "v", x=str(round(pt[0],2)), y=str(round(pt[1],2)))
-                    segments_node = contour.find('segments')
-                    segments_node.text = "L" * len(in_loop)
-    
-                contour = new_poly.find('OutputContour')
-                if contour is not None:
-                    pts_node = contour.find('points')
-                    pts_node.clear()
-                    for pt in out_loop:
-                        ET.SubElement(pts_node, "v", x=str(round(pt[0],2)), y=str(round(pt[1],2)))
-                    segments_node = contour.find('segments')
-                    segments_node.text = "L" * len(out_loop)
+                    # Map Properties
+                    params = new_item.find('.//Params[@name="Common"]')
+                    if params is not None:
+                        for param in params.findall('Param'):
+                            if param.get('name') == 'Name':
+                                param.set('value', f"{safe_layer_name}_{loop_idx}")
+                                
+                    in_params = new_item.find('.//Params[@name="Input"]')
+                    if in_params is not None:
+                        for param in in_params.findall('ParamChoice'):
+                            if param.get('name') == 'Input Source':
+                                param.set('value', input_source)
+                                param.set('default', input_source)
+                    
+                    rect = new_item.find('InputRect')
+                    if rect is not None:
+                        rect.clear()
+                        rect.set('orientation', "0")
+                        ET.SubElement(rect, "v", x=str(round(in_min_x,2)), y=str(round(in_min_y,2)))
+                        ET.SubElement(rect, "v", x=str(round(in_max_x,2)), y=str(round(in_min_y,2)))
+                        ET.SubElement(rect, "v", x=str(round(in_max_x,2)), y=str(round(in_max_y,2)))
+                        ET.SubElement(rect, "v", x=str(round(in_min_x,2)), y=str(round(in_max_y,2)))
+                    
+                    rect = new_item.find('OutputRect')
+                    if rect is not None:
+                        rect.clear()
+                        rect.set('orientation', "0")
+                        ET.SubElement(rect, "v", x=str(round(out_min_x,2)), y=str(round(out_min_y,2)))
+                        ET.SubElement(rect, "v", x=str(round(out_max_x,2)), y=str(round(out_min_y,2)))
+                        ET.SubElement(rect, "v", x=str(round(out_max_x,2)), y=str(round(out_max_y,2)))
+                        ET.SubElement(rect, "v", x=str(round(out_min_x,2)), y=str(round(out_max_y,2)))
                         
-                layers.append(new_poly)
+                    homography = new_item.find('.//Homography')
+                    if homography is not None:
+                        for tag in ['src', 'dst']:
+                            p_node = homography.find(tag)
+                            if p_node is not None:
+                                p_node.clear()
+                                ET.SubElement(p_node, "v", x=str(round(out_min_x,2)), y=str(round(out_min_y,2)))
+                                ET.SubElement(p_node, "v", x=str(round(out_max_x,2)), y=str(round(out_min_y,2)))
+                                ET.SubElement(p_node, "v", x=str(round(out_max_x,2)), y=str(round(out_max_y,2)))
+                                ET.SubElement(p_node, "v", x=str(round(out_min_x,2)), y=str(round(out_max_y,2)))
+                                
+                    point_mode = new_item.find('.//Warper/Params[@name="Warper"]/ParamChoice[@name="Point Mode"]')
+                    if point_mode is not None:
+                        point_mode.set('value', 'PM_BEZIER')
+                        
+                    bezier_warper = new_item.find('.//BezierWarper')
+                    if bezier_warper is not None:
+                        bw_verts = bezier_warper.find('vertices')
+                        if bw_verts is not None:
+                            bw_verts.clear()
+                            
+                            tl = min(range(4), key=lambda i: out_loop[i][0] + out_loop[i][1])
+                            br = max(range(4), key=lambda i: out_loop[i][0] + out_loop[i][1])
+                            tr = max(range(4), key=lambda i: out_loop[i][0] - out_loop[i][1])
+                            bl = min(range(4), key=lambda i: out_loop[i][0] - out_loop[i][1])
+                            
+                            ordered_loop = [out_loop[tl], out_loop[tr], out_loop[br], out_loop[bl]]
+                            
+                            A, B, C, D = ordered_loop[0], ordered_loop[1], ordered_loop[2], ordered_loop[3]
+                            for v_idx in range(4):
+                                v = v_idx / 3.0
+                                for u_idx in range(4):
+                                    u = u_idx / 3.0
+                                    px = (1-u)*(1-v)*A[0] + u*(1-v)*B[0] + u*v*C[0] + (1-u)*v*D[0]
+                                    py = (1-u)*(1-v)*A[1] + u*(1-v)*B[1] + u*v*C[1] + (1-u)*v*D[1]
+                                    ET.SubElement(bw_verts, "v", x=str(round(px, 2)), y=str(round(py, 2)))
+                                    
+                    layers.append(new_item)
+                else:
+                    new_item = copy.deepcopy(tmpl_poly)
+                    new_item.set("uniqueId", uid)
+                    
+                    # Map Properties
+                    params = new_item.find('.//Params[@name="Common"]')
+                    if params is not None:
+                        for param in params.findall('Param'):
+                            if param.get('name') == 'Name':
+                                param.set('value', f"{safe_layer_name}_{loop_idx}")
+                                
+                    in_params = new_item.find('.//Params[@name="Input"]')
+                    if in_params is not None:
+                        for param in in_params.findall('ParamChoice'):
+                            if param.get('name') == 'Input Source':
+                                param.set('value', input_source)
+                                param.set('default', input_source)
+                    
+                    rect = new_item.find('InputRect')
+                    if rect is not None:
+                        rect.clear()
+                        rect.set('orientation', "0")
+                        ET.SubElement(rect, "v", x=str(round(in_min_x,2)), y=str(round(in_min_y,2)))
+                        ET.SubElement(rect, "v", x=str(round(in_max_x,2)), y=str(round(in_min_y,2)))
+                        ET.SubElement(rect, "v", x=str(round(in_max_x,2)), y=str(round(in_max_y,2)))
+                        ET.SubElement(rect, "v", x=str(round(in_min_x,2)), y=str(round(in_max_y,2)))
+        
+                    rect = new_item.find('OutputRect')
+                    if rect is not None:
+                        rect.clear()
+                        rect.set('orientation', "0")
+                        ET.SubElement(rect, "v", x=str(round(out_min_x,2)), y=str(round(out_min_y,2)))
+                        ET.SubElement(rect, "v", x=str(round(out_max_x,2)), y=str(round(out_min_y,2)))
+                        ET.SubElement(rect, "v", x=str(round(out_max_x,2)), y=str(round(out_max_y,2)))
+                        ET.SubElement(rect, "v", x=str(round(out_min_x,2)), y=str(round(out_max_y,2)))
+                        
+                    # Inject Contours
+                    contour = new_item.find('InputContour')
+                    if contour is not None:
+                        pts_node = contour.find('points')
+                        pts_node.clear()
+                        for pt in in_loop:
+                            ET.SubElement(pts_node, "v", x=str(round(pt[0],2)), y=str(round(pt[1],2)))
+                        segments_node = contour.find('segments')
+                        segments_node.text = "L" * len(in_loop)
+        
+                    contour = new_item.find('OutputContour')
+                    if contour is not None:
+                        pts_node = contour.find('points')
+                        pts_node.clear()
+                        for pt in out_loop:
+                            ET.SubElement(pts_node, "v", x=str(round(pt[0],2)), y=str(round(pt[1],2)))
+                        segments_node = contour.find('segments')
+                        segments_node.text = "L" * len(out_loop)
+                            
+                    layers.append(new_item)
                 
         screens_parent.append(new_screen)
         
@@ -816,9 +899,12 @@ def get_resolume_polygon_data(filepath, selected_nodes, width, height, hidden_gr
                 out_loop_simp = [p_loop[i] for i in simplified_indices]
                 
                 # Remove redundant start/end point if it exists
-                if len(in_loop_simp) > 3 and in_loop_simp[0] == in_loop_simp[-1]:
+                if len(in_loop_simp) > 3 and abs(in_loop_simp[0][0] - in_loop_simp[-1][0]) < 0.5 and abs(in_loop_simp[0][1] - in_loop_simp[-1][1]) < 0.5:
                     in_loop_simp.pop()
                     out_loop_simp.pop()
+                    
+                if len(in_loop_simp) < 3:
+                    continue
                     
                 # Perturb any consecutive identical points to prevent Resolume triangulator crash
                 for i in range(1, len(in_loop_simp)):
@@ -826,12 +912,6 @@ def get_resolume_polygon_data(filepath, selected_nodes, width, height, hidden_gr
                         in_loop_simp[i] = [in_loop_simp[i][0] + 0.5, in_loop_simp[i][1] + 0.5]
                     if abs(out_loop_simp[i][0] - out_loop_simp[i-1][0]) < 0.5 and abs(out_loop_simp[i][1] - out_loop_simp[i-1][1]) < 0.5:
                         out_loop_simp[i] = [out_loop_simp[i][0] + 0.5, out_loop_simp[i][1] + 0.5]
-                        
-                if len(in_loop_simp) > 2:
-                    if abs(in_loop_simp[0][0] - in_loop_simp[-1][0]) < 0.5 and abs(in_loop_simp[0][1] - in_loop_simp[-1][1]) < 0.5:
-                        in_loop_simp[-1] = [in_loop_simp[-1][0] + 0.5, in_loop_simp[-1][1] + 0.5]
-                    if abs(out_loop_simp[0][0] - out_loop_simp[-1][0]) < 0.5 and abs(out_loop_simp[0][1] - out_loop_simp[-1][1]) < 0.5:
-                        out_loop_simp[-1] = [out_loop_simp[-1][0] + 0.5, out_loop_simp[-1][1] + 0.5]
                         
                 def signed_area(pts):
                     if len(pts) < 3: return 0.0
@@ -841,8 +921,17 @@ def get_resolume_polygon_data(filepath, selected_nodes, width, height, hidden_gr
                         area += pts[k][0] * pts[j][1] - pts[j][0] * pts[k][1]
                     return area
                     
+                if abs(signed_area(in_loop_simp)) < 1.0 or abs(signed_area(out_loop_simp)) < 1.0:
+                    continue
+                    
                 if signed_area(in_loop_simp) * signed_area(out_loop_simp) < 0:
                     in_loop_simp = in_loop_simp[::-1]
+                    
+                def is_valid_loop(loop):
+                    return all(not (math.isnan(pt[0]) or math.isnan(pt[1]) or math.isinf(pt[0]) or math.isinf(pt[1])) for pt in loop)
+                    
+                if not is_valid_loop(in_loop_simp) or not is_valid_loop(out_loop_simp):
+                    continue
                         
                 resolume_mapped_loops.append({"input": in_loop_simp, "output": out_loop_simp})
                 
